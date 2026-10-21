@@ -21,14 +21,16 @@ struct Preset {
 }
 
 const PRESETS: &[Preset] = &[
-    Preset { name: "Studio Maple (ciepły)",   tone: 200.0, ring: 0.80,  damping: 2800.0, snare: 0.5,  snap: 0.65, sweep: 0.25, glue: 0.40, verb: 0.25 },
-    Preset { name: "Tight Piccolo Crack",     tone: 360.0, ring: 0.55,  damping: 6000.0, snare: 0.70, snap: 0.90, sweep: 0.20, glue: 0.50, verb: 0.20 },
-    Preset { name: "Fat & Deep",              tone: 130.0, ring: 0.92,  damping: 1500.0, snare: 0.40, snap: 0.60, sweep: 0.40, glue: 0.50, verb: 0.30 },
-    Preset { name: "Brass Supraphonic (ring)",tone: 220.0, ring: 0.95,  damping: 8000.0, snare: 0.55, snap: 0.75, sweep: 0.20, glue: 0.30, verb: 0.25 },
-    Preset { name: "Dry Vintage (muffled)",   tone: 210.0, ring: 0.60,  damping: 1200.0, snare: 0.35, snap: 0.70, sweep: 0.15, glue: 0.55, verb: 0.15 },
-    Preset { name: "Funk Snap",               tone: 250.0, ring: 0.70,  damping: 4500.0, snare: 0.65, snap: 0.85, sweep: 0.30, glue: 0.45, verb: 0.20 },
-    Preset { name: "Open Ringy (bez tłumika)",tone: 190.0, ring: 0.985, damping: 9000.0, snare: 0.60, snap: 0.70, sweep: 0.20, glue: 0.30, verb: 0.35 },
-    Preset { name: "Electro Snip",            tone: 300.0, ring: 0.50,  damping: 7000.0, snare: 0.80, snap: 0.95, sweep: 0.10, glue: 0.60, verb: 0.10 },
+    Preset { name: "Studio Maple (ciepły)",    tone: 200.0, ring: 0.80,  damping: 3200.0, snare: 0.55, snap: 0.70, sweep: 0.25, glue: 0.40, verb: 0.25 },
+    Preset { name: "Tight Piccolo Crack",      tone: 350.0, ring: 0.55,  damping: 6000.0, snare: 0.70, snap: 0.90, sweep: 0.18, glue: 0.50, verb: 0.20 },
+    Preset { name: "Fat & Deep",               tone: 130.0, ring: 0.90,  damping: 2500.0, snare: 0.40, snap: 0.60, sweep: 0.45, glue: 0.50, verb: 0.30 },
+    Preset { name: "Brass Supraphonic (ring)", tone: 220.0, ring: 0.95,  damping: 8000.0, snare: 0.60, snap: 0.75, sweep: 0.20, glue: 0.35, verb: 0.28 },
+    Preset { name: "Dry Vintage (muffled)",    tone: 210.0, ring: 0.60,  damping: 2200.0, snare: 0.40, snap: 0.65, sweep: 0.15, glue: 0.55, verb: 0.15 },
+    Preset { name: "Funk Snap",                tone: 250.0, ring: 0.70,  damping: 5000.0, snare: 0.65, snap: 0.85, sweep: 0.30, glue: 0.45, verb: 0.20 },
+    Preset { name: "Open Ringy (bez tłumika)", tone: 190.0, ring: 0.99,  damping: 9000.0, snare: 0.60, snap: 0.70, sweep: 0.20, glue: 0.30, verb: 0.35 },
+    Preset { name: "Electro Snip",             tone: 300.0, ring: 0.50,  damping: 7000.0, snare: 0.80, snap: 0.95, sweep: 0.10, glue: 0.60, verb: 0.10 },
+    Preset { name: "Lo-Fi Tape",               tone: 170.0, ring: 0.70,  damping: 1800.0, snare: 0.45, snap: 0.60, sweep: 0.30, glue: 0.60, verb: 0.20 },
+    Preset { name: "New Wave Gated",           tone: 320.0, ring: 0.45,  damping: 7500.0, snare: 0.85, snap: 0.90, sweep: 0.12, glue: 0.70, verb: 0.05 },
 ];
 
 /// Stan istniejący tylko, gdy okno edytora jest otwarte.
@@ -201,37 +203,70 @@ impl NiceEguiApp for WerbelEditor {
                                 ui.small("feedback synthesis · gwolaniuk");
                                 ui.add_space(4.0);
 
-                                // --- lista presetów ---
+                                // --- lista presetów + random ---
+                                let sp = |param: &FloatParam, v: f32| {
+                                    setter.begin_set_parameter(param);
+                                    setter.set_parameter(param, v);
+                                    setter.end_set_parameter(param);
+                                };
                                 let cur_name = if self.preset_idx == 0 {
                                     "— Custom —"
                                 } else {
                                     PRESETS[self.preset_idx - 1].name
                                 };
-                                egui::ComboBox::from_label("Preset")
-                                    .selected_text(cur_name)
-                                    .show_ui(ui, |ui| {
-                                        if ui.selectable_label(self.preset_idx == 0, "— Custom —").clicked() {
-                                            self.preset_idx = 0;
-                                        }
-                                        for (i, p) in PRESETS.iter().enumerate() {
-                                            if ui.selectable_label(self.preset_idx == i + 1, p.name).clicked() {
-                                                self.preset_idx = i + 1;
-                                                let sp = |param: &FloatParam, v: f32| {
-                                                    setter.begin_set_parameter(param);
-                                                    setter.set_parameter(param, v);
-                                                    setter.end_set_parameter(param);
-                                                };
-                                                sp(&self.params.tone, p.tone);
-                                                sp(&self.params.ring, p.ring);
-                                                sp(&self.params.damping, p.damping);
-                                                sp(&self.params.snare, p.snare);
-                                                sp(&self.params.snap, p.snap);
-                                                sp(&self.params.sweep, p.sweep);
-                                                sp(&self.params.glue, p.glue);
-                                                sp(&self.params.verb, p.verb);
+                                ui.horizontal(|ui| {
+                                    egui::ComboBox::from_label("Preset")
+                                        .selected_text(cur_name)
+                                        .show_ui(ui, |ui| {
+                                            if ui.selectable_label(self.preset_idx == 0, "— Custom —").clicked() {
+                                                self.preset_idx = 0;
                                             }
-                                        }
-                                    });
+                                            for (i, pres) in PRESETS.iter().enumerate() {
+                                                if ui.selectable_label(self.preset_idx == i + 1, pres.name).clicked() {
+                                                    self.preset_idx = i + 1;
+                                                    sp(&self.params.tone, pres.tone);
+                                                    sp(&self.params.ring, pres.ring);
+                                                    sp(&self.params.damping, pres.damping);
+                                                    sp(&self.params.snare, pres.snare);
+                                                    sp(&self.params.snap, pres.snap);
+                                                    sp(&self.params.sweep, pres.sweep);
+                                                    sp(&self.params.glue, pres.glue);
+                                                    sp(&self.params.verb, pres.verb);
+                                                }
+                                            }
+                                        });
+                                    if ui.button("🎲 Randomize").clicked() {
+                                        self.preset_idx = 0;
+                                        let seed = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.subsec_nanos())
+                                            .unwrap_or(1);
+                                        let mut r = seed;
+                                        let mut rr = |min: f32, max: f32| {
+                                            r ^= r << 13;
+                                            r ^= r >> 17;
+                                            r ^= r << 5;
+                                            let u = (r >> 8) as f32 * (1.0 / 16_777_216.0);
+                                            min + u * (max - min)
+                                        };
+                                        let t = rr(100.0, 420.0);
+                                        let rg = rr(0.5, 0.995);
+                                        let dp = rr(1500.0, 8000.0);
+                                        let sn = rr(0.2, 0.9);
+                                        let sp1 = rr(0.4, 1.0);
+                                        let sw = rr(0.05, 0.6);
+                                        let gl = rr(0.15, 0.7);
+                                        let vb = rr(0.05, 0.5);
+                                        sp(&self.params.tone, t);
+                                        sp(&self.params.ring, rg);
+                                        sp(&self.params.damping, dp);
+                                        sp(&self.params.snare, sn);
+                                        sp(&self.params.snap, sp1);
+                                        sp(&self.params.sweep, sw);
+                                        sp(&self.params.glue, gl);
+                                        sp(&self.params.verb, vb);
+                                    }
+                                });
                                 ui.add_space(6.0);
 
                                 let p = |ui: &mut egui::Ui, name: &str, param: &FloatParam| {

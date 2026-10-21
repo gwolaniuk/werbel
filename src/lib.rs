@@ -101,7 +101,7 @@ impl Default for WerbelParams {
                 .with_string_to_value(formatters::s2v_f32_percentage()),
             damping: FloatParam::new(
                 "Damping",
-                3500.0,
+                4800.0,
                 FloatRange::Linear { min: 300.0, max: 14_000.0 },
             )
             .with_smoother(SmoothingStyle::Logarithmic(10.0))

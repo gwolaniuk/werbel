@@ -1,89 +1,16 @@
-//! Werbel — syntezator werbla oparty o **feedback synthesis**.
+//! Werbel — synteza 3-warstwowa (brzmi jak werbel, nie jak bongo):
 //!
-//! Rdzeń dźwięku (za: _„Synthesize SNARES that sound REAL using the power of
-//! FEEDBACK”_, youtube.com/watch?v=1Db9rGbth_o):
-//! krótki, kilkumilisekundowy **transient** (szum) wstrzyknięty w pętlę
-//! sprzężenia zwrotnego (delay + dolnoprzepustowy filtr w pętli). Pętla modeluje
-//! **rezonans membrany** — częstotliwość rezonansu wyznacza czas opóźnienia
-//! (`f = sr / delay`), a filtr w pętli daje tłumienie zależne od częstotliwości
-//! (wyższe mody gaśnię szybciej, jak w prawdziwej membranie).
+//! 1. **Body (membrana)** — trójkąt z szybkim opadnięciem pitchu (klasyczne
+//!    „thump"), krótki zanik. To odpowiednik pojedynczego modu pętli, ale tyle
+//!    samo trwa, ile trwa uderzenie — nie dzwoni.
+//! 2. **Crack (pałeczka)** — szum wysoko-przepustowy, bardzo krótki „pstryk".
+//! 3. **Sizzle (sprężyny)** — szum pasmowo-przepustowy przepuszczony przez
+//!    krótki comb → metaliczny poszum drutów, dłuższy zanik.
 //!
-//! Do tego dodana jest druga, jaśniejsza pętla rezonansowa („sprężyny"/snares),
-//! pobudzana tym samym transientem — daje metaliczny poszum drutów werbla.
+//! Feedback (z wideo) zostaje w warstwie sprężyn (comb) oraz w ugięciu
+//! membrany: obwiednia pitchu + sprzężenie głośności pętli.
 
 use std::f32::consts::TAU;
-
-// ---------------------------------------------------------------------------
-// Rezonator: delay + filtr w pętli sprzężenia zwrotnego (comb-resonator).
-// ---------------------------------------------------------------------------
-pub struct Resonator {
-    buf: Vec<f32>,
-    write: usize,
-    delay: f32,       // ułamkowe opóźnienie w próbkach
-    feedback: f32,    // 0.0 .. <1.0 (ile wraca do pętli)
-    lp: f32,          // stan jednobiegunowego filtru dolnoprzepustowego
-    damp: f32,        // współczynnik tego filtru
-    last_out: f32,    // ostatnie wyjście (do modulacji delay przez głośność pętli)
-}
-
-impl Resonator {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            buf: vec![0.0; capacity],
-            write: 0,
-            delay: 100.0,
-            feedback: 0.9,
-            lp: 0.0,
-            damp: 0.05,
-            last_out: 0.0,
-        }
-    }
-
-    /// Ustawia częstotliwość osiową rezonansu (`f = sr / delay`).
-    pub fn set_frequency(&mut self, freq: f32, sr: f32) {
-        self.delay = (sr / freq).clamp(2.0, (self.buf.len() - 1) as f32);
-    }
-
-    /// Ustawia dolnoprzepustowy filtr tłumiący w pętli (Hz).
-    pub fn set_damping(&mut self, hz: f32, sr: f32) {
-        self.damp = 1.0 - (-TAU * hz / sr).exp();
-    }
-
-    /// Jeden krok rezonatora: `input` to wzbudzenie (transient).
-    #[inline]
-    pub fn tick(&mut self, input: f32) -> f32 {
-        let len = self.buf.len() as f32;
-
-        // Odczyt z interpolacją liniową (płynne strojenie).
-        let mut rp = self.write as f32 - self.delay;
-        while rp < 0.0 {
-            rp += len;
-        }
-        let i0 = rp as usize;
-        let frac = rp - i0 as f32;
-        let i1 = if i0 + 1 >= self.buf.len() { 0 } else { i0 + 1 };
-        let out = self.buf[i0] * (1.0 - frac) + self.buf[i1] * frac;
-
-        // Filtr tłumiący w pętli (lowpass) — energia odpływa z górą pasma.
-        self.lp += self.damp * (out - self.lp);
-
-        // Zapis do pętli: wzbudzenie + sprzężenie zwrotne przefiltrowanego sygnału.
-        self.buf[self.write] = input + self.feedback * self.lp;
-        self.write += 1;
-        if self.write >= self.buf.len() {
-            self.write = 0;
-        }
-
-        self.last_out = out;
-        out
-    }
-
-    pub fn clear(&mut self) {
-        self.buf.fill(0.0);
-        self.lp = 0.0;
-        self.write = 0;
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Generator szumu (xorshift32) — deterministyczny, bez alokacji.
@@ -102,69 +29,91 @@ impl WhiteNoise {
         self.state ^= self.state << 13;
         self.state ^= self.state >> 17;
         self.state ^= self.state << 5;
-        // 0..1
         (self.state >> 8) as f32 * (1.0 / 16_777_216.0)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Głos werbla: transient -> (membrana + sprężyny), naturalne wybrzmienie.
+// Głos werbla
 // ---------------------------------------------------------------------------
 pub struct SnareVoice {
-    head: Resonator,  // membrana (wysokie napięcie -> czyste mody)
-    snares: Resonator,// sprężyny (jaśniejsze, wyższy rezonans)
+    // --- membrana (body) ---
+    body_phase: f32,
+    body_f_end: f32,      // docelowa częstotliwość (Tone)
+    body_f_span: f32,     // o ile wyżej startuje pitch (Sweep)
+    body_env: f32,        // obwiednia (1 -> 0)
+    body_pitch_env: f32,  // ugięcie naciągu (1 -> 0)
+    body_decay: f32,      // per-sample zanik obwiedni
+    pitch_decay: f32,     // per-sample zanik ugięcia
+
+    // --- crack (pałeczka) ---
+    crack_env: f32,
+    crack_decay: f32,
+    crack_hp: f32,        // stan jednobiegunowego high-pass
+    crack_k: f32,
+
+    // --- sizzle (sprężyny) ---
+    sizzle_env: f32,
+    sizzle_decay: f32,
+    bp_lp1: f32,          // bandpass: lowpass(górny)
+    bp_lp2: f32,          // bandpass: lowpass(dolny)
+    bp_k1: f32,
+    bp_k2: f32,
+    comb: Vec<f32>,       // grzebień sprężyn
+    comb_pos: usize,
+    comb_lp: f32,
+    comb_damp: f32,
+
     noise: WhiteNoise,
-
-    // wzbudzenie (transient)
-    exc_len: usize,   // długość transjenta w próbkach
-    exc_pos: usize,
-    snap: f32,        // poziom transjenta (0..1)
-
-    // poziomy
-    snare_amt: f32,   // 0..1 — ile sprężyn
-    level: f32,       // master
-
-    // pitch sweep membrany (naciąg ugina się po uderzeniu)
-    head_base_delay: f32,
-    sweep: f32,       // 0..1 — głębokość opadnięcia pitchu
-    pitch_env: f32,   // 1 -> 0
-    pitch_decay: f32, // jednopróbkowy współczynnik zaniku
-
-    active: bool,
+    level: f32,
     sample_rate: f32,
+    active: bool,
     dead_count: u32,
 }
 
 impl SnareVoice {
     pub fn new(sample_rate: f32) -> Self {
-        let mut head = Resonator::new(sample_rate as usize);
-        let mut snares = Resonator::new(sample_rate as usize);
-        head.set_frequency(200.0, sample_rate);
-        snares.set_frequency(1600.0, sample_rate);
-        head.set_damping(3500.0, sample_rate);
-        snares.set_damping(12000.0, sample_rate);
+        let sr = sample_rate.max(1.0);
         Self {
-            head,
-            snares,
-            noise: WhiteNoise::new(),
-            exc_len: 0,
-            exc_pos: 0,
-            snap: 0.7,
-            snare_amt: 0.6,
-            level: 0.8,
-            head_base_delay: sample_rate / 200.0,
-            sweep: 0.25,
-            pitch_env: 0.0,
+            body_phase: 0.0,
+            body_f_end: 200.0,
+            body_f_span: 40.0,
+            body_env: 0.0,
+            body_pitch_env: 0.0,
+            body_decay: 1.0,
             pitch_decay: 1.0,
+            crack_env: 0.0,
+            crack_decay: 1.0,
+            crack_hp: 0.0,
+            crack_k: 1.0 - (-TAU * 1500.0 / sr).exp(),
+            sizzle_env: 0.0,
+            sizzle_decay: 1.0,
+            bp_lp1: 0.0,
+            bp_lp2: 0.0,
+            bp_k1: 0.5,
+            bp_k2: 0.3,
+            comb: vec![0.0; (sr * 0.0012) as usize + 1],
+            comb_pos: 0,
+            comb_lp: 0.0,
+            comb_damp: 1.0 - (-TAU * 6500.0 / sr).exp(),
+            noise: WhiteNoise::new(),
+            level: 0.8,
+            sample_rate: sr,
             active: false,
-            sample_rate,
             dead_count: 0,
         }
     }
 
-    /// Wyzwala werbel. `tone` = częstotliwość membrany, `ring` = sprzężenie
-    /// zwrotne (długość wybrzmienia), `damping` = jasność pętli membrany,
-    /// `snare` = poziom sprężyn, `snap` = poziom transjenta, `vel` = velocity.
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate.max(1.0);
+        self.crack_k = 1.0 - (-TAU * 1500.0 / self.sample_rate).exp();
+        self.comb_damp = 1.0 - (-TAU * 6500.0 / self.sample_rate).exp();
+    }
+
+    pub fn set_level(&mut self, level: f32) {
+        self.level = level;
+    }
+
     pub fn trigger(
         &mut self,
         tone: f32,
@@ -176,72 +125,83 @@ impl SnareVoice {
         vel: f32,
     ) {
         let sr = self.sample_rate;
-        self.head.set_frequency(tone, sr);
-        self.head_base_delay = self.head.delay.max(2.0);
-        // Sprężyny rezonują ~8x wyżej niż membrana (metaliczny poszum).
-        self.snares.set_frequency((tone * 8.0).clamp(400.0, 8000.0), sr);
-        self.head.feedback = ring.clamp(0.0, 0.998);
-        self.snares.feedback = (ring.clamp(0.0, 0.998) * 0.97).clamp(0.0, 0.995);
-        self.head.set_damping(damping, sr);
-        self.snares.set_damping(12000.0, sr);
+        let r = ring.clamp(0.2, 1.0);
 
-        // Transient: 3 ms szumu — „katalizator" całego dźwięku.
-        self.exc_len = (sr * 0.003) as usize;
-        self.exc_pos = 0;
-        self.snap = (snap * (0.5 + 0.5 * vel)).clamp(0.0, 1.0);
-        self.snare_amt = snare.clamp(0.0, 1.0);
+        // --- membrana ---
+        self.body_f_end = tone.clamp(60.0, 900.0);
+        self.body_f_span = self.body_f_end * 0.5 * sweep.clamp(0.0, 1.0);
+        self.body_phase = 0.0;
+        self.body_pitch_env = 1.0;
+        self.pitch_decay = (-1.0 / (0.045 * sr)).exp();
+        self.body_env = 1.0;
+        self.body_decay = (-1.0 / (0.085 * (0.4 + r) * sr)).exp();
 
-        // Zgięcie naciągu: pitch zaczyna wyżej i opada ~80 ms.
-        self.sweep = sweep.clamp(0.0, 1.0);
-        self.pitch_env = 1.0;
-        self.pitch_decay = (-1.0 / (0.08 * sr)).exp();
+        // --- crack ---
+        self.crack_env = (snap.clamp(0.0, 1.0) * (0.5 + 0.5 * vel)).clamp(0.0, 1.0) * 1.5;
+        self.crack_decay = (-1.0 / (0.020 * sr)).exp();
+        self.crack_hp = 0.0;
+
+        // --- sizzle ---
+        self.sizzle_env = snare.clamp(0.0, 1.0) * 1.2;
+        self.sizzle_decay = (-1.0 / (0.16 * (0.5 + 0.8 * r) * sr)).exp();
+        let fhi = damping.clamp(2000.0, 10_000.0);
+        let flo = (fhi * 0.5).clamp(300.0, 5000.0);
+        self.bp_k1 = 1.0 - (-TAU * fhi / sr).exp();
+        self.bp_k2 = 1.0 - (-TAU * flo / sr).exp();
+        self.bp_lp1 = 0.0;
+        self.bp_lp2 = 0.0;
+        self.comb.fill(0.0);
+        self.comb_pos = 0;
+        self.comb_lp = 0.0;
 
         self.active = true;
         self.dead_count = 0;
     }
 
-    pub fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = sample_rate;
-    }
-
-    pub fn set_level(&mut self, level: f32) {
-        self.level = level;
-    }
-
-    /// Renderuje jedną próbkę (mono).
     #[inline]
     pub fn process(&mut self) -> f32 {
         if !self.active {
             return 0.0;
         }
 
-        // --- wzbudzenie (szumowy transient o krótkim czasie życia) ---
         let n = self.noise.next() * 2.0 - 1.0;
-        let exc = if self.exc_pos < self.exc_len {
-            let k = 1.0 - (self.exc_pos as f32 / self.exc_len as f32);
-            self.exc_pos += 1;
-            n * k * self.snap * 2.0
-        } else {
-            0.0
-        };
 
-        // --- pętla membrany: delay modulowany zgięciem naciągu ---
-        self.pitch_env *= self.pitch_decay;
-        // Zgodnie z wideo: głośność pętli moduluje delay (nieliniowość membrany
-        // „loose head"), a obwiednia zgięcia daje klasyczny spadek pitchu.
-        let wobble = (self.head.last_out * 0.35).clamp(-1.0, 1.0);
-        let dl = self.head_base_delay * (1.0 - self.sweep * self.pitch_env) + wobble;
-        self.head.delay = dl.clamp(2.0, (self.head.buf.len() - 1) as f32);
+        // --- membrana: trójkąt z glide'em ---
+        self.body_pitch_env *= self.pitch_decay;
+        let f = self.body_f_end + self.body_f_span * self.body_pitch_env;
+        self.body_phase += f / self.sample_rate;
+        if self.body_phase >= 1.0 {
+            self.body_phase -= 1.0;
+        }
+        let tri = 4.0 * self.body_phase.min(1.0 - self.body_phase) - 1.0;
+        self.body_env *= self.body_decay;
+        let body = tri * self.body_env * 0.5;
 
-        // --- obie pętle rezonansowe pobudzane tym samym transientem ---
-        let head_out = self.head.tick(exc);
-        let snares_out = self.snares.tick(exc);
+        // --- crack: szum high-pass ---
+        self.crack_hp += self.crack_k * (n - self.crack_hp);
+        let crack_noise = n - self.crack_hp;
+        self.crack_env *= self.crack_decay;
+        let crack = crack_noise * self.crack_env * 0.9;
 
-        // Membrana + sprężyny + bezpośredni transient („trzask" pałeczki).
-        let mut out = head_out + snares_out * self.snare_amt * 0.9 + exc * 0.25;
+        // --- sizzle: szum band-pass -> comb ---
+        self.bp_lp1 += self.bp_k1 * (n - self.bp_lp1);
+        self.bp_lp2 += self.bp_k2 * (n - self.bp_lp2);
+        let bp = self.bp_lp1 - self.bp_lp2;
+
+        let comb_out = self.comb[self.comb_pos];
+        self.comb_lp += self.comb_damp * (comb_out - self.comb_lp);
+        self.comb[self.comb_pos] = bp + 0.55 * self.comb_lp;
+        self.comb_pos += 1;
+        if self.comb_pos >= self.comb.len() {
+            self.comb_pos = 0;
+        }
+        self.sizzle_env *= self.sizzle_decay;
+        let sizzle = (bp * 0.45 + comb_out * 0.9) * self.sizzle_env;
+
+        let mut out = body + crack + sizzle;
         out *= self.level;
 
-        // Naturalne wybrzmienie: dezaktywuj, gdy sygnał wygasł.
+        // dezaktywacja po wygaśnięciu
         if out.abs() < 1e-4 {
             self.dead_count += 1;
             if self.dead_count > 480 {
@@ -252,8 +212,7 @@ impl SnareVoice {
             self.dead_count = 0;
         }
 
-        // Miękkie obcięcie — gęstszy, „nagłośniony" charakter.
-        (out * 1.6).tanh()
+        (out * 1.5).tanh()
     }
 
     pub fn is_active(&self) -> bool {
