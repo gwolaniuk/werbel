@@ -45,18 +45,43 @@ src/
 
 ## Budowanie
 
-```bash
-# wymagane: rustup (nightly z rust-toolchain.toml) + linkowanie do C++
-rustup toolchain install nightly-2024-08-08
-rustup target add x86_64-pc-windows-msvc
+Wymagane: **Rust ≥ 1.88** (stable). Do linkowania potrzeba kompilatora C.
 
+### Windows (MinGW, bez MSVC/Visual Studio)
+
+```bash
+rustup toolchain install stable-x86_64-pc-windows-gnu
+
+# przenośny MinGW-w64 — winlibs (extract do ~/winlibs/)
+# https://github.com/brechtsanders/winlibs_mingw/releases
+
+# ustaw linker (raz):
+export RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu
+export PATH="$HOME/winlibs/mingw64/bin:$PATH"
+antconfig:
+mkdir -p .cargo && cat > .cargo/config.toml <<'EOF'
+[target.x86_64-pc-windows-gnu]
+linker = "<sciezka>/winlibs/mingw64/bin/x86_64-w64-mingw32-gcc.exe"
+ar = "<sciezka>/winlibs/mingw64/bin/ar.exe"
+EOF
+
+cargo build --release
+```
+
+### Windows (MSVC — rekomendowane)
+
+Zainstaluj „Visual Studio 2022 Build Tools" (komponent „Desktop development with C++"), potem:
+
+```bash
 cargo build --release
 ```
 
 ### Pakowanie do .vst3
 
-Docelowo przez `cargo xtask bundle` (nih-plug xtask) — do dodania w kolejnym
-kroku (wymaga Windows MSVC toolchain + link.exe).
+Docelowo przez `cargo nice-plug bundle` (wymaga `cargo install cargo-nice-plug`).
+Ręcznie (Windows): skopiuj `target/release/werbel.dll` do
+`Werbel.vst3/Contents/x86_64-win/Werbel.vst3` i wrzuć do katalogu VST3 hosta
+(`C:\Program Files\Common Files\VST3\`).
 
 ## Roadmap
 

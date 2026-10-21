@@ -1,4 +1,5 @@
 /target
+/.cargo
 *.vst3
 *.clap
-.DS_Store/.cargo
+.DS_Store
