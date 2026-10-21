@@ -84,123 +84,38 @@ fn hit_test(d: &Rects, p: egui::Pos2) -> Drag {
     else if d.sticks.contains(p) { Drag::Snap }
     else if d.rod.contains(p) { Drag::Sweep }
     else if d.shell.contains(p) { Drag::Ring }
-    else if d.top_rim.contains(p) { Drag::Tone }
+    else if d.top_rim.contains(p) { Drag::Damping }
     else { Drag::None }
 }
 
-// Kolory (kremowe tło, ciemny rysunek — jak referencja).
-const BG: egui::Color32 = egui::Color32::from_rgb(0xf3, 0xee, 0xe2);
-const DARK: egui::Color32 = egui::Color32::from_rgb(0x38, 0x34, 0x2e);
-const SILVER: egui::Color32 = egui::Color32::from_rgb(0xb9, 0xbf, 0xc6);
-const SILVER_DK: egui::Color32 = egui::Color32::from_rgb(0x8f, 0x96, 0x9e);
-const HEAD: egui::Color32 = egui::Color32::from_rgb(0xfb, 0xfa, 0xf5);
-const WARM: egui::Color32 = egui::Color32::from_rgb(0x9c, 0x6f, 0x44);
-const HL: egui::Color32 = egui::Color32::from_rgb(0x2f, 0x74, 0xb5);
+/// Blueprint werbla jako surowe RGBA 940x940 (generowane gen_blueprint.py).
+const BLUEPRINT: &[u8] = include_bytes!("../assets/werbel_blueprint.rgba");
+const BP_W: usize = 940;
+const BP_H: usize = 940;
 
-fn paint(p: &egui::Painter, d: &Rects, font: egui::FontId, drag: Drag) {
-    let stroke = egui::Stroke::new(1.4, DARK);
+// Tło panelu — zbiegające z blueprintem (ciemnoniebieskie).
+const BG: egui::Color32 = egui::Color32::from_rgb(0x16, 0x3a, 0x6e);
+fn hl_fill() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(110, 180, 255, 46)
+}
+const HL_LINE: egui::Color32 = egui::Color32::from_rgb(140, 210, 255);
 
-    // obręcze
-    p.rect_filled(d.top_rim, 3.0, DARK);
-    p.rect_filled(d.bottom_rim, 3.0, DARK);
-    // naciągi
-    p.rect_filled(d.batter, 0.0, HEAD);
-    p.rect_stroke(d.batter, 0.0, stroke, egui::StrokeKind::Inside);
-    p.rect_filled(d.reson, 0.0, HEAD);
-    p.rect_stroke(d.reson, 0.0, stroke, egui::StrokeKind::Inside);
-    // korpus (z cieniowaniem)
-    p.rect_filled(d.shell, 6.0, SILVER);
-    p.rect_stroke(d.shell, 6.0, stroke, egui::StrokeKind::Inside);
-    let glint = egui::Rect::from_min_max(
-        egui::pos2(d.shell.left() + 4.0, d.shell.top() + 4.0),
-        egui::pos2(d.shell.left() + 22.0, d.shell.bottom() - 4.0),
-    );
-    p.rect_filled(glint, 4.0, SILVER_DK);
-    // otwór wentylacyjny
-    let vent = egui::pos2(d.shell.right() - 34.0, d.shell.top() + 30.0);
-    p.circle_filled(vent, 5.0, DARK);
-    p.circle_stroke(vent, 7.0, stroke);
-
-    // śruby naciągowe + uszy (lugs)
-    for i in 0..6 {
-        let x = d.shell.left() + 14.0 + i as f32 * (d.shell.width() - 28.0) / 5.0;
-        p.line_segment(
-            [egui::pos2(x, d.top_rim.center().y - 10.0), egui::pos2(x, d.bottom_rim.center().y + 10.0)],
-            egui::Stroke::new(2.0, DARK),
-        );
-        p.rect_filled(
-            egui::Rect::from_center_size(egui::pos2(x, d.shell.center().y), egui::vec2(8.0, 26.0)),
-            2.0,
-            WARM,
-        );
-    }
-    // wyróżniona śruba (Sweep)
-    let rx = d.rod.center().x;
-    p.line_segment(
-        [egui::pos2(rx, d.top_rim.center().y - 10.0), egui::pos2(rx, d.bottom_rim.center().y + 10.0)],
-        egui::Stroke::new(3.0, if drag == Drag::Sweep { HL } else { WARM }),
-    );
-
-    // sprężyny (zigzag)
-    let n = 18;
-    let sw = d.snares.width();
-    let y0 = d.snares.top();
-    let y1 = d.snares.bottom();
-    for i in 0..n {
-        let x0 = d.snares.left() + sw * i as f32 / n as f32;
-        let x1 = d.snares.left() + sw * (i + 1) as f32 / n as f32;
-        let zig = if i % 2 == 0 { 1.0 } else { -1.0 };
-        let midy = (y0 + y1) / 2.0 + zig * (y1 - y0) * 0.35;
-        p.line_segment([egui::pos2(x0, if i % 2 == 0 { y0 } else { y1 }), egui::pos2(x1, midy)], egui::Stroke::new(1.1, DARK));
-    }
-
-    // throw-off (strainer) po lewej
-    let tx = d.shell.left() - 24.0;
-    p.line_segment(
-        [egui::pos2(tx, d.reson.bottom() + 4.0), egui::pos2(tx, d.reson.bottom() + 44.0)],
-        egui::Stroke::new(3.0, DARK),
-    );
-    p.circle_filled(egui::pos2(tx, d.reson.bottom() + 44.0), 4.5, WARM);
-
-    // pałeczki
-    let tip = egui::pos2(d.batter.center().x + 30.0, d.top_rim.top() - 4.0);
-    let tail = egui::pos2(tip.x + 150.0, tip.y - 96.0);
-    p.line_segment([tail, tip], egui::Stroke::new(3.2, WARM));
-    p.circle_filled(tip, 5.0, WARM);
-
-    // podświetlenie strefy przeciągania
-    let highlight = |rect: egui::Rect| {
-        p.rect_stroke(rect.expand(3.0), 4.0, egui::Stroke::new(1.6, HL), egui::StrokeKind::Inside);
-    };
+/// Prostokąt strefy danego elementu (do podświetlania).
+fn zone_rect(d: &Rects, drag: Drag) -> egui::Rect {
     match drag {
-        Drag::Tone => highlight(d.batter),
-        Drag::Ring => highlight(d.shell),
-        Drag::Snare => highlight(d.snares),
-        Drag::Snap => highlight(d.sticks),
-        Drag::Sweep => highlight(d.rod),
-        Drag::Damping => highlight(egui::Rect::from_center_size(d.batter.center(), egui::vec2(40.0, 10.0))),
-        Drag::None => {}
+        Drag::Tone => d.batter,
+        Drag::Ring => d.shell,
+        Drag::Snare => d.snares,
+        Drag::Snap => d.sticks,
+        Drag::Sweep => d.rod,
+        Drag::Damping => d.top_rim,
+        Drag::None => egui::Rect::NOTHING,
     }
-
-    // etykiety (po prawej, techniczne)
-    let lx = d.shell.right() + 26.0;
-    let label = |y: f32, t: &str, active: bool| {
-        let c = if active { HL } else { DARK };
-        p.text(egui::pos2(lx, y), egui::Align2::LEFT_CENTER, t, font.clone(), c);
-    };
-    label(d.batter.center().y, "batter head — TONE", drag == Drag::Tone);
-    label(d.top_rim.center().y, "counterhoop (obręcz)", false);
-    label(d.shell.top() + 30.0, "air vent (otwór)", false);
-    label(d.shell.center().y, "shell — RING", drag == Drag::Ring);
-    label(d.shell.bottom() - 24.0, "tension rod — SWEEP", drag == Drag::Sweep);
-    label(d.reson.center().y, "resonant head", false);
-    label(d.snares.center().y, "snares — SNARE", drag == Drag::Snare);
-    label(d.snares.bottom() + 14.0, "strainer / throw-off", false);
-    label(d.sticks.top() + 6.0, "stick — SNAP", drag == Drag::Snap);
 }
 
 struct OpenState {
     nice_gui_ctx: GuiContext,
+    tex: egui::TextureHandle,
 }
 
 pub struct WerbelEditor {
@@ -220,11 +135,17 @@ impl WerbelEditor {
 impl NiceEguiApp for WerbelEditor {
     fn build(
         &mut self,
-        _egui_ctx: egui::Context,
+        egui_ctx: egui::Context,
         nice_gui_ctx: GuiContext,
         _frame: &mut nice_plug_egui::Frame,
     ) -> Result<(), nice_plug_egui::baseview::HandlerError> {
-        self.open_state = Some(OpenState { nice_gui_ctx });
+        let image = egui::ColorImage::from_rgba_unmultiplied([BP_W, BP_H], BLUEPRINT);
+        let tex = egui_ctx.load_texture(
+            "werbel-blueprint",
+            image,
+            egui::TextureOptions::LINEAR,
+        );
+        self.open_state = Some(OpenState { nice_gui_ctx, tex });
         Ok(())
     }
 
@@ -309,7 +230,24 @@ impl NiceEguiApp for WerbelEditor {
                                 self.active_drag = Drag::None;
                             }
 
-                            paint(&painter, &d, egui::FontId::proportional(11.0), self.active_drag);
+                            // blueprint jako tło + podświetlenie aktywnej strefy
+                            let tex_id = state.tex.id();
+                            painter.image(
+                                tex_id,
+                                resp.rect,
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                egui::Color32::WHITE,
+                            );
+                            if self.active_drag != Drag::None {
+                                let r = zone_rect(&d, self.active_drag);
+                                painter.rect_filled(r, 2.0, hl_fill());
+                                painter.rect_stroke(
+                                    r,
+                                    2.0,
+                                    egui::Stroke::new(1.5, HL_LINE),
+                                    egui::StrokeKind::Inside,
+                                );
+                            }
 
                             ui.separator();
 

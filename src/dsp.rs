@@ -59,8 +59,9 @@ pub struct SnareVoice {
     bp_lp2: f32,          // bandpass: lowpass(dolny)
     bp_k1: f32,
     bp_k2: f32,
-    comb: Vec<f32>,       // grzebień sprężyn
+    comb: Vec<f32>,       // grzebień sprężyn (rezonans drutów)
     comb_pos: usize,
+    comb_delay: usize,    // odczyt = pos + len - delay
     comb_lp: f32,
     comb_damp: f32,
 
@@ -92,8 +93,9 @@ impl SnareVoice {
             bp_lp2: 0.0,
             bp_k1: 0.5,
             bp_k2: 0.3,
-            comb: vec![0.0; (sr * 0.0012) as usize + 1],
+            comb: vec![0.0; (sr * 0.005) as usize + 1],
             comb_pos: 0,
+            comb_delay: 24,
             comb_lp: 0.0,
             comb_damp: 1.0 - (-TAU * 6500.0 / sr).exp(),
             noise: WhiteNoise::new(),
@@ -141,11 +143,11 @@ impl SnareVoice {
         self.crack_decay = (-1.0 / (0.020 * sr)).exp();
         self.crack_hp = 0.0;
 
-        // --- sizzle ---
-        self.sizzle_env = snare.clamp(0.0, 1.0) * 1.2;
+        // --- sizzle: druty pobudzane RUCHEM membrany ---
+        self.sizzle_env = snare.clamp(0.0, 1.0) * 0.9;
         self.sizzle_decay = (-1.0 / (0.16 * (0.5 + 0.8 * r) * sr)).exp();
         let fhi = damping.clamp(2000.0, 10_000.0);
-        let flo = (fhi * 0.5).clamp(300.0, 5000.0);
+        let flo = (fhi * 0.72).clamp(300.0, 5000.0);   // węższe pasmo
         self.bp_k1 = 1.0 - (-TAU * fhi / sr).exp();
         self.bp_k2 = 1.0 - (-TAU * flo / sr).exp();
         self.bp_lp1 = 0.0;
@@ -153,6 +155,9 @@ impl SnareVoice {
         self.comb.fill(0.0);
         self.comb_pos = 0;
         self.comb_lp = 0.0;
+        // rezonans drutów podąża za strojem membrany (~tone x 10)
+        self.comb_delay =
+            (sr / (tone.clamp(60.0, 900.0) * 10.0)).clamp(8.0, 200.0) as usize;
 
         self.active = true;
         self.dead_count = 0;
@@ -183,20 +188,27 @@ impl SnareVoice {
         self.crack_env *= self.crack_decay;
         let crack = crack_noise * self.crack_env * 0.9;
 
-        // --- sizzle: szum band-pass -> comb ---
+        // --- sizzle: druty „bzzzt" — szum modulowany wychyleniem membrany ---
         self.bp_lp1 += self.bp_k1 * (n - self.bp_lp1);
         self.bp_lp2 += self.bp_k2 * (n - self.bp_lp2);
         let bp = self.bp_lp1 - self.bp_lp2;
 
-        let comb_out = self.comb[self.comb_pos];
+        // Ruch membrany bramkuje szum drutów — druty grzęzną w drganiach
+        // głowy (to daje charakterystyczny „bzzzt", nie czysty szum).
+        let head_sig = tri * self.body_env;
+        let wire_exc = bp * (head_sig.abs() * 3.0 + 0.01);
+
+        let clen = self.comb.len();
+        let read = (self.comb_pos + clen - self.comb_delay) % clen;
+        let comb_out = self.comb[read];
         self.comb_lp += self.comb_damp * (comb_out - self.comb_lp);
-        self.comb[self.comb_pos] = bp + 0.55 * self.comb_lp;
+        self.comb[self.comb_pos] = wire_exc + 0.6 * self.comb_lp;
         self.comb_pos += 1;
-        if self.comb_pos >= self.comb.len() {
+        if self.comb_pos >= clen {
             self.comb_pos = 0;
         }
         self.sizzle_env *= self.sizzle_decay;
-        let sizzle = (bp * 0.45 + comb_out * 0.9) * self.sizzle_env;
+        let sizzle = (comb_out * 0.75 + bp * 0.03) * self.sizzle_env;
 
         let mut out = body + crack + sizzle;
         out *= self.level;
