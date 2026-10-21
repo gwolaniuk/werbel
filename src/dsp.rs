@@ -23,6 +23,7 @@ pub struct Resonator {
     feedback: f32,    // 0.0 .. <1.0 (ile wraca do pętli)
     lp: f32,          // stan jednobiegunowego filtru dolnoprzepustowego
     damp: f32,        // współczynnik tego filtru
+    last_out: f32,    // ostatnie wyjście (do modulacji delay przez głośność pętli)
 }
 
 impl Resonator {
@@ -34,6 +35,7 @@ impl Resonator {
             feedback: 0.9,
             lp: 0.0,
             damp: 0.05,
+            last_out: 0.0,
         }
     }
 
@@ -72,6 +74,7 @@ impl Resonator {
             self.write = 0;
         }
 
+        self.last_out = out;
         out
     }
 
@@ -121,6 +124,12 @@ pub struct SnareVoice {
     snare_amt: f32,   // 0..1 — ile sprężyn
     level: f32,       // master
 
+    // pitch sweep membrany (naciąg ugina się po uderzeniu)
+    head_base_delay: f32,
+    sweep: f32,       // 0..1 — głębokość opadnięcia pitchu
+    pitch_env: f32,   // 1 -> 0
+    pitch_decay: f32, // jednopróbkowy współczynnik zaniku
+
     active: bool,
     sample_rate: f32,
     dead_count: u32,
@@ -143,6 +152,10 @@ impl SnareVoice {
             snap: 0.7,
             snare_amt: 0.6,
             level: 0.8,
+            head_base_delay: sample_rate / 200.0,
+            sweep: 0.25,
+            pitch_env: 0.0,
+            pitch_decay: 1.0,
             active: false,
             sample_rate,
             dead_count: 0,
@@ -159,10 +172,12 @@ impl SnareVoice {
         damping: f32,
         snare: f32,
         snap: f32,
+        sweep: f32,
         vel: f32,
     ) {
         let sr = self.sample_rate;
         self.head.set_frequency(tone, sr);
+        self.head_base_delay = self.head.delay.max(2.0);
         // Sprężyny rezonują ~8x wyżej niż membrana (metaliczny poszum).
         self.snares.set_frequency((tone * 8.0).clamp(400.0, 8000.0), sr);
         self.head.feedback = ring.clamp(0.0, 0.998);
@@ -175,6 +190,12 @@ impl SnareVoice {
         self.exc_pos = 0;
         self.snap = (snap * (0.5 + 0.5 * vel)).clamp(0.0, 1.0);
         self.snare_amt = snare.clamp(0.0, 1.0);
+
+        // Zgięcie naciągu: pitch zaczyna wyżej i opada ~80 ms.
+        self.sweep = sweep.clamp(0.0, 1.0);
+        self.pitch_env = 1.0;
+        self.pitch_decay = (-1.0 / (0.08 * sr)).exp();
+
         self.active = true;
         self.dead_count = 0;
     }
@@ -203,6 +224,14 @@ impl SnareVoice {
         } else {
             0.0
         };
+
+        // --- pętla membrany: delay modulowany zgięciem naciągu ---
+        self.pitch_env *= self.pitch_decay;
+        // Zgodnie z wideo: głośność pętli moduluje delay (nieliniowość membrany
+        // „loose head"), a obwiednia zgięcia daje klasyczny spadek pitchu.
+        let wobble = (self.head.last_out * 0.35).clamp(-1.0, 1.0);
+        let dl = self.head_base_delay * (1.0 - self.sweep * self.pitch_env) + wobble;
+        self.head.delay = dl.clamp(2.0, (self.head.buf.len() - 1) as f32);
 
         // --- obie pętle rezonansowe pobudzane tym samym transientem ---
         let head_out = self.head.tick(exc);

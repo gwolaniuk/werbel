@@ -11,6 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 nice-plug = "0.4"
+nice-plug-egui = "0.6"
+egui = "0.37"
 
 [profile.release]
 lto = "thin"
