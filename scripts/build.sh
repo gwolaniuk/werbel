@@ -32,5 +32,5 @@ rm -f "$RESULT"
 echo "▶ 4/4 commit + push..."
 git add -A
 git commit -q -m "${1:-update}" || echo "   (brak zmian do commita)"
-git push -q
+git push -q origin HEAD:main
 echo "✓ gotowe"
