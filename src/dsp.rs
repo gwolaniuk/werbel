@@ -179,6 +179,10 @@ impl SnareVoice {
         self.dead_count = 0;
     }
 
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate;
+    }
+
     pub fn set_level(&mut self, level: f32) {
         self.level = level;
     }

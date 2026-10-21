@@ -10,7 +10,7 @@ description = "VST3/CLAP sytnezator werbla oparty na feedback synthesis (modelow
 crate-type = ["cdylib"]
 
 [dependencies]
-nih_plug = "0.10"
+nice-plug = "0.4"
 
 [profile.release]
 lto = "thin"

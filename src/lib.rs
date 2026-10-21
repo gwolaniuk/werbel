@@ -4,7 +4,7 @@
 //! Metoda dźwięku wzorowana na filmie „Synthesize SNARES that sound REAL using
 //! the power of FEEDBACK" (youtube.com/watch?v=1Db9rGbth_o).
 
-use nih_plug::prelude::*;
+use nice_plug::prelude::*;
 use std::sync::Arc;
 
 mod dsp;
@@ -46,8 +46,8 @@ impl Default for Werbel {
     fn default() -> Self {
         Self {
             params: Arc::new(WerbelParams::default()),
-            voice: dsp::SnareVoice::new(44100.0),
-            sample_rate: 44100.0,
+            voice: dsp::SnareVoice::new(48_000.0),
+            sample_rate: 48_000.0,
         }
     }
 }
@@ -55,14 +55,10 @@ impl Default for Werbel {
 impl Default for WerbelParams {
     fn default() -> Self {
         Self {
-            tone: FloatParam::new(
-                "Tone",
-                200.0,
-                FloatRange::Linear { min: 80.0, max: 600.0 },
-            )
-            .with_smoother(SmoothingStyle::Logarithmic(10.0))
-            .with_unit(" Hz")
-            .with_value_to_string(formatters::v2s_f32_hz_then_khz(0)),
+            tone: FloatParam::new("Tone", 200.0, FloatRange::Linear { min: 80.0, max: 600.0 })
+                .with_smoother(SmoothingStyle::Logarithmic(10.0))
+                .with_unit(" Hz")
+                .with_value_to_string(formatters::v2s_f32_hz_then_khz(0)),
 
             ring: FloatParam::new("Ring", 0.90, FloatRange::Linear { min: 0.5, max: 0.998 })
                 .with_smoother(SmoothingStyle::Linear(10.0))
@@ -70,10 +66,14 @@ impl Default for WerbelParams {
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
 
-            damping: FloatParam::new("Damping", 3500.0, FloatRange::Linear { min: 300.0, max: 14000.0 })
-                .with_smoother(SmoothingStyle::Logarithmic(10.0))
-                .with_unit(" Hz")
-                .with_value_to_string(formatters::v2s_f32_hz_then_khz(0)),
+            damping: FloatParam::new(
+                "Damping",
+                3500.0,
+                FloatRange::Linear { min: 300.0, max: 14_000.0 },
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(10.0))
+            .with_unit(" Hz")
+            .with_value_to_string(formatters::v2s_f32_hz_then_khz(0)),
 
             snare: FloatParam::new("Snare", 0.6, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_smoother(SmoothingStyle::Linear(10.0))
@@ -112,6 +112,7 @@ impl Plugin for Werbel {
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
+    type Editor = ();
     type SysExMessage = ();
     type BackgroundTask = ();
 
@@ -119,24 +120,19 @@ impl Plugin for Werbel {
         self.params.clone()
     }
 
-    fn initialize(
-        &mut self,
-        _bus_config: &BusConfig,
-        buffer_config: &BufferConfig,
-        _context: &mut impl InitContext,
-    ) -> bool {
-        self.sample_rate = buffer_config.sample_rate;
-        self.voice = dsp::SnareVoice::new(self.sample_rate);
-        true
-    }
-
     fn process(
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        context: &mut impl ProcessContext,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Wyłapujemy note-on (wyzwolenie werbla).
+        let sample_rate = context.transport().sample_rate;
+        if (sample_rate - self.sample_rate).abs() > 1.0 {
+            self.sample_rate = sample_rate;
+            self.voice.set_sample_rate(sample_rate);
+        }
+
+        // note-on wyzwala werbel.
         let mut trigger = None;
         while let Some(event) = context.next_event() {
             if let NoteEvent::NoteOn { velocity, .. } = event {
@@ -144,7 +140,7 @@ impl Plugin for Werbel {
             }
         }
 
-        for mut samples in buffer.iter_samples() {
+        for mut channel_samples in buffer.iter_samples() {
             let tone = self.params.tone.smoothed.next();
             let ring = self.params.ring.smoothed.next();
             let damping = self.params.damping.smoothed.next();
@@ -158,29 +154,38 @@ impl Plugin for Werbel {
             }
 
             let s = self.voice.process();
-            samples[0] = s;
-            samples[1] = s;
+            for sample in channel_samples {
+                *sample = s;
+            }
         }
 
         ProcessStatus::Normal
     }
+
+    fn deactivate(&mut self) {}
 }
 
 impl ClapPlugin for Werbel {
     const CLAP_ID: &'static str = "com.gwolaniuk.werbel";
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("Snare drum synthesizer (feedback synthesis of the drum head)");
-    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
-    const CLAP_FEATURES: &'static [ClapFeature] =
-        &[ClapFeature::Instrument, ClapFeature::Synthesizer];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::Instrument,
+        ClapFeature::Synthesizer,
+        ClapFeature::Stereo,
+    ];
 }
 
 impl Vst3Plugin for Werbel {
     const VST3_CLASS_ID: [u8; 16] = *b"WrblFeedGwln0001";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
-        &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Instrument,
+        Vst3SubCategory::Synth,
+        Vst3SubCategory::Stereo,
+    ];
 }
 
-nih_plug::nih_export_clap!(Werbel);
-nih_plug::nih_export_vst3!(Werbel);
+nice_export_clap!(Werbel);
+nice_export_vst3!(Werbel);
