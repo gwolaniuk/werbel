@@ -1,0 +1,18 @@
+[package]
+name = "werbel"
+version = "0.1.0"
+edition = "2021"
+authors = ["gwolaniuk"]
+license = "MIT"
+description = "VST3/CLAP sytnezator werbla oparty na feedback synthesis (modelowanie rezonansu membrany) — wg metody z filmu 'Synthesize SNARES that sound REAL using the power of FEEDBACK'"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nih_plug = "0.10"
+
+[profile.release]
+lto = "thin"
+opt-level = 3
+strip = "symbols"
